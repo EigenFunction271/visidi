@@ -1,6 +1,6 @@
 {
   "name": "visidi-bridge",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Local WebSocket bridge that receives element captures from the Visidi browser extension and writes agent-ready prompts to a queue file.",
   "author": "Brendan Beh",
   "repository": {

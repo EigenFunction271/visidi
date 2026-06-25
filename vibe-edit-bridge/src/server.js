@@ -1,29 +1,58 @@
 /**
  * WebSocket server for vibe-edit-bridge.
  *
- * Responsibilities (PRD §7.2):
- *  - Bind to a port in the 4017-4020 range (extension hardcodes 4017, see
- *    cli.js warning if we fall back).
+ * Responsibilities (PRD §7.2 + auto-apply-plan.md):
+ *  - Bind to a port in the 4017-4020 range (extension hardcodes 4017).
  *  - Validate incoming payloads, reject malformed ones without crashing.
- *  - Hand valid payloads to writeQueue for formatting + appending to disk.
+ *  - Append to queue.md; optionally spawn claude CLI when autoApply is true.
  */
 
 const { WebSocketServer } = require("ws");
 const { appendEditToQueue } = require("./writeQueue");
+const { applyEditViaClaude } = require("./applyEdit");
+
+let applyInFlight = false;
 
 function isValidPayload(payload) {
-  return (
-    payload &&
-    payload.type === "element_selected" &&
-    typeof payload.selector === "string" &&
-    typeof payload.tag === "string" &&
-    Array.isArray(payload.classes) &&
-    payload.computedStyle &&
-    typeof payload.pageUrl === "string"
-  );
+  if (
+    !payload ||
+    payload.type !== "element_selected" ||
+    typeof payload.selector !== "string" ||
+    typeof payload.tag !== "string" ||
+    !Array.isArray(payload.classes) ||
+    !payload.computedStyle ||
+    typeof payload.pageUrl !== "string"
+  ) {
+    return false;
+  }
+  if (
+    payload.autoApply !== undefined &&
+    typeof payload.autoApply !== "boolean"
+  ) {
+    return false;
+  }
+  return true;
 }
 
-function tryBindPort(port, cwd) {
+function sendApplyResult(ws, ok, message) {
+  if (ws.readyState === ws.OPEN) {
+    ws.send(JSON.stringify({ type: "apply_result", ok, message }));
+  }
+}
+
+function logQueuedEdit(payload, result) {
+  const time = new Date().toLocaleTimeString();
+  const label = payload.text
+    ? `"${payload.text.slice(0, 40)}"`
+    : `<${payload.tag}>`;
+  console.log(`[${time}] Queued edit: ${payload.tag} ${label}`);
+  console.log(
+    `[visidi-bridge]   wrote ${result.bytesWritten} bytes (${result.entryCount})`
+  );
+  console.log(`[visidi-bridge]   file: ${result.absolutePath}`);
+}
+
+function tryBindPort(port) {
   return new Promise((resolve, reject) => {
     const wss = new WebSocketServer({ port });
 
@@ -33,10 +62,9 @@ function tryBindPort(port, cwd) {
 
     wss.on("error", (err) => {
       if (err.code === "EADDRINUSE") {
-        reject(err); // caller tries the next port in range
+        reject(err);
       } else {
-        // Unexpected error after binding (e.g. mid-session) — log, don't crash.
-        console.error("[vibe-edit-bridge] Server error:", err.message);
+        console.error("[visidi-bridge] Server error:", err.message);
       }
     });
   });
@@ -49,12 +77,11 @@ async function startServer({ portRangeStart, portRangeEnd, cwd }) {
 
   for (let port = portRangeStart; port <= portRangeEnd; port += 1) {
     try {
-      wss = await tryBindPort(port, cwd);
+      wss = await tryBindPort(port);
       boundPort = port;
       break;
     } catch (err) {
       lastErr = err;
-      // EADDRINUSE — try next port in range, per PRD §7.2
     }
   }
 
@@ -62,47 +89,101 @@ async function startServer({ portRangeStart, portRangeEnd, cwd }) {
     throw lastErr || new Error("Unable to bind any port in range.");
   }
 
-  wss.on("connection", (ws) => {
+  wss.on("connection", (ws, req) => {
+    const client = req?.socket?.remoteAddress || "unknown";
+    console.log(`[visidi-bridge] Client connected (${client})`);
+
     ws.on("message", (raw) => {
+      console.log(`[visidi-bridge] Received message (${raw.length} bytes)`);
+
       let payload;
       try {
         payload = JSON.parse(raw.toString());
       } catch (err) {
         const preview = raw.toString().slice(0, 200);
         console.warn(
-          `[vibe-edit-bridge] Received malformed JSON, ignoring: ${preview}`
+          `[visidi-bridge] Received malformed JSON, ignoring: ${preview}`
         );
         return;
       }
 
       if (!isValidPayload(payload)) {
         console.warn(
-          "[vibe-edit-bridge] Received payload missing required fields, ignoring."
+          "[visidi-bridge] Received payload missing required fields, ignoring.",
+          "Got keys:",
+          Object.keys(payload || {}).join(", ") || "(none)"
         );
         return;
       }
 
+      const autoApply = payload.autoApply === true;
+      const instructionPreview =
+        payload.instruction && payload.instruction.length > 0
+          ? payload.instruction
+          : "(no instruction — placeholder will be used)";
+
+      console.log(
+        `[visidi-bridge] Valid capture: <${payload.tag}> on ${payload.pageUrl}`
+      );
+      console.log(`[visidi-bridge]   selector: ${payload.selector}`);
+      console.log(`[visidi-bridge]   instruction: ${instructionPreview}`);
+      if (autoApply) {
+        console.log("[visidi-bridge]   auto-apply: requested");
+      }
+
+      if (autoApply && applyInFlight) {
+        console.warn(
+          "[visidi-bridge] Auto-apply rejected — another apply is in flight"
+        );
+        sendApplyResult(ws, false, "busy");
+        return;
+      }
+
       appendEditToQueue(payload, cwd)
-        .then(() => {
-          const time = new Date().toLocaleTimeString();
-          const label = payload.text
-            ? `"${payload.text.slice(0, 40)}"`
-            : `<${payload.tag}>`;
-          console.log(
-            `[${time}] Queued edit: ${payload.tag} ${label} — .vibe-edits/queue.md`
-          );
+        .then(async (result) => {
+          logQueuedEdit(payload, result);
+
+          if (!autoApply) {
+            console.log(
+              "[visidi-bridge]   next step: tell your coding agent to read this file and apply the edit in source code"
+            );
+            return;
+          }
+
+          applyInFlight = true;
+          console.log("[visidi-bridge] Starting auto-apply via claude CLI…");
+
+          try {
+            const applyResult = await applyEditViaClaude(payload, cwd);
+            if (applyResult.ok) {
+              console.log("[visidi-bridge] Auto-apply finished successfully");
+              sendApplyResult(ws, true, "Applied successfully");
+            } else {
+              const msg = applyResult.error || "claude exited with error";
+              console.error(`[visidi-bridge] Auto-apply failed: ${msg}`);
+              sendApplyResult(ws, false, msg);
+            }
+          } finally {
+            applyInFlight = false;
+          }
         })
         .catch((err) => {
-          // PRD §7.3 — directory/permission issues should not crash the server
           console.error(
-            "[vibe-edit-bridge] Failed to write to queue file:",
+            "[visidi-bridge] Failed to write to queue file:",
             err.message
           );
+          if (autoApply) {
+            sendApplyResult(ws, false, err.message);
+          }
         });
     });
 
+    ws.on("close", () => {
+      console.log("[visidi-bridge] Client disconnected");
+    });
+
     ws.on("error", (err) => {
-      console.warn("[vibe-edit-bridge] Client connection error:", err.message);
+      console.warn("[visidi-bridge] Client connection error:", err.message);
     });
   });
 

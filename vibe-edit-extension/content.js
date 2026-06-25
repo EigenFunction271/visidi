@@ -13,6 +13,7 @@
 (() => {
   const BRIDGE_URL = "ws://localhost:4017"; // PRD §7.2 — hardcoded in v1, see PRD §9 future work
   const BRIDGE_CONNECT_TIMEOUT_MS = 1000;
+  const AUTO_APPLY_TIMEOUT_MS = 65_000;
 
   let pickModeActive = false;
   let bridgeAvailable = null; // null = unknown yet this session, true/false once tested
@@ -31,6 +32,7 @@
   function setPickMode(active) {
     pickModeActive = active;
     if (active) {
+      bridgeAvailable = null; // retry WebSocket each pick activation, PRD §6.3
       document.addEventListener("mouseover", onMouseOver, true);
       document.addEventListener("click", onClick, true);
       document.addEventListener("keydown", onKeyDown, true);
@@ -173,41 +175,112 @@
   // ---------------------------------------------------------------------
 
   function promptForInstructionThenSend(payload) {
-    const toast = showToast(`Selected <${payload.tag}> — what should change?`, {
-      persistent: true,
-    });
+    removeInstructionComposer();
 
-    const row = document.createElement("div");
-    row.className = "vibe-edit-toast-input-row";
+    const backdrop = document.createElement("div");
+    backdrop.className = "vibe-edit-backdrop";
 
-    const input = document.createElement("input");
-    input.className = "vibe-edit-toast-input";
-    input.type = "text";
-    input.placeholder = "e.g. make the background green";
+    const composer = document.createElement("div");
+    composer.className = "vibe-edit-composer";
+    composer.setAttribute("role", "dialog");
+    composer.setAttribute("aria-label", "Describe your edit");
+
+    const header = document.createElement("div");
+    header.className = "vibe-edit-composer-header";
+
+    const label = document.createElement("span");
+    label.className = "vibe-edit-composer-label";
+    label.textContent = `Selected <${payload.tag}>`;
+
+    const hint = document.createElement("span");
+    hint.className = "vibe-edit-composer-hint";
+    hint.textContent = "What do you want to change?";
+
+    header.appendChild(label);
+    header.appendChild(hint);
+
+    const input = document.createElement("textarea");
+    input.className = "vibe-edit-composer-input";
+    input.rows = 3;
+    input.placeholder = "e.g. make the background green and increase the padding";
+
+    const footer = document.createElement("div");
+    footer.className = "vibe-edit-composer-footer";
+
+    const autoRow = document.createElement("div");
+    autoRow.className = "vibe-edit-composer-auto-row";
+
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.id = "vibe-edit-auto-apply";
+    checkbox.className = "vibe-edit-composer-checkbox";
+
+    const autoLabel = document.createElement("label");
+    autoLabel.htmlFor = "vibe-edit-auto-apply";
+    autoLabel.className = "vibe-edit-composer-checkbox-label";
+    autoLabel.textContent = "Apply automatically";
+
+    autoRow.appendChild(checkbox);
+    autoRow.appendChild(autoLabel);
+
+    const shortcuts = document.createElement("span");
+    shortcuts.className = "vibe-edit-composer-shortcuts";
+    shortcuts.textContent = "Enter to send · Shift+Enter for new line · Esc to skip";
 
     const button = document.createElement("button");
-    button.className = "vibe-edit-toast-button";
+    button.className = "vibe-edit-composer-button";
+    button.type = "button";
     button.textContent = "Send";
 
-    const finish = () => {
-      payload.instruction = input.value.trim(); // empty -> bridge/clipboard formatter uses placeholder text
-      toast.remove();
+    footer.appendChild(autoRow);
+    footer.appendChild(shortcuts);
+    footer.appendChild(button);
+
+    composer.appendChild(header);
+    composer.appendChild(input);
+    composer.appendChild(footer);
+
+    document.body.appendChild(backdrop);
+    document.body.appendChild(composer);
+
+    requestAnimationFrame(() => {
+      backdrop.classList.add("vibe-edit-backdrop-visible");
+      composer.classList.add("vibe-edit-composer-visible");
+    });
+
+    const dismiss = (send) => {
+      if (send) {
+        payload.instruction = input.value.trim();
+        payload.autoApply = checkbox.checked;
+      } else {
+        payload.autoApply = false;
+      }
+      removeInstructionComposer();
       dispatchPayload(payload);
     };
 
+    const finish = () => dismiss(true);
+
     button.addEventListener("click", finish);
+    backdrop.addEventListener("click", () => dismiss(false));
+
     input.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") finish();
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        finish();
+      }
       if (e.key === "Escape") {
-        toast.remove();
-        dispatchPayload(payload); // user dismissed — still send with empty instruction
+        e.preventDefault();
+        dismiss(false);
       }
     });
 
-    row.appendChild(input);
-    row.appendChild(button);
-    toast.appendChild(row);
     input.focus();
+  }
+
+  function removeInstructionComposer() {
+    document.querySelector(".vibe-edit-backdrop")?.remove();
+    document.querySelector(".vibe-edit-composer")?.remove();
   }
 
   // ---------------------------------------------------------------------
@@ -220,37 +293,85 @@
       return;
     }
 
+    const autoApply = payload.autoApply === true;
     let settled = false;
     const ws = new WebSocket(BRIDGE_URL);
-    const timeout = setTimeout(() => {
+
+    const failToClipboard = () => {
+      bridgeAvailable = false;
+      copyToClipboard(payload);
+    };
+
+    const connectTimeout = setTimeout(() => {
       if (!settled) {
         settled = true;
-        bridgeAvailable = false;
         try {
           ws.close();
         } catch (_) {
           /* noop */
         }
-        copyToClipboard(payload);
+        failToClipboard();
       }
     }, BRIDGE_CONNECT_TIMEOUT_MS);
 
     ws.addEventListener("open", () => {
       if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
+      clearTimeout(connectTimeout);
       bridgeAvailable = true;
       ws.send(JSON.stringify(payload));
-      ws.close(); // fresh short-lived connection per capture, see PRD §6.3
-      showToast("Sent to bridge ✓");
+
+      if (!autoApply) {
+        settled = true;
+        ws.close();
+        showToast("Sent to bridge ✓");
+        return;
+      }
+
+      showToast("Applying…", { persistent: true, applying: true });
+
+      const applyTimeout = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        try {
+          ws.close();
+        } catch (_) {
+          /* noop */
+        }
+        showToast("Failed — see bridge terminal (timeout)");
+      }, AUTO_APPLY_TIMEOUT_MS);
+
+      ws.addEventListener("message", (event) => {
+        if (settled) return;
+        let msg;
+        try {
+          msg = JSON.parse(event.data);
+        } catch (_) {
+          return;
+        }
+        if (msg?.type !== "apply_result") return;
+
+        settled = true;
+        clearTimeout(applyTimeout);
+        try {
+          ws.close();
+        } catch (_) {
+          /* noop */
+        }
+
+        if (msg.ok) {
+          showToast("Applied ✓");
+        } else {
+          const detail = msg.message ? `: ${msg.message}` : "";
+          showToast(`Failed — see bridge terminal${detail}`);
+        }
+      });
     });
 
     ws.addEventListener("error", () => {
       if (settled) return;
       settled = true;
-      clearTimeout(timeout);
-      bridgeAvailable = false;
-      copyToClipboard(payload);
+      clearTimeout(connectTimeout);
+      failToClipboard();
     });
   }
 
@@ -310,6 +431,9 @@
 
     const toast = document.createElement("div");
     toast.className = "vibe-edit-toast";
+    if (opts.applying) {
+      toast.classList.add("vibe-edit-toast-applying");
+    }
     toast.textContent = message;
     document.body.appendChild(toast);
 

@@ -27,7 +27,14 @@ Captured data is either:
    CLI you run locally), or
 2. Copied to your system clipboard if the local bridge is not running.
 
-No analytics, tracking, or third-party services are used.
+No analytics, tracking, or third-party services are used by the extension
+or bridge themselves.
+
+If you opt in to **Apply automatically** in the extension, visidi-bridge
+spawns the local `claude` CLI on your machine to edit files in the
+directory where you started the bridge. That subprocess is governed by
+Anthropic's Claude Code terms and may send your prompt to Anthropic's API
+according to your Claude Code configuration.
 
 ## Permissions
 

@@ -19,8 +19,16 @@ async function appendEditToQueue(payload, cwd) {
   const block = formatPrompt(payload);
   const exists = fs.existsSync(filePath);
   const separator = exists ? "\n\n---\n\n" : "";
+  const content = separator + block + "\n";
 
-  await fs.promises.appendFile(filePath, separator + block + "\n", "utf8");
+  await fs.promises.appendFile(filePath, content, "utf8");
+
+  return {
+    filePath,
+    absolutePath: path.resolve(filePath),
+    bytesWritten: Buffer.byteLength(content, "utf8"),
+    entryCount: exists ? "appended" : "created",
+  };
 }
 
 module.exports = { appendEditToQueue };

@@ -1,13 +1,13 @@
-# VIbey SIte DIrector
+# visidi-bridge
 
-Local WebSocket bridge for the VIbey SIte DIrector browser extension. Receives
-element captures from the extension and appends agent-ready edit prompts to
+Local WebSocket bridge for the Visidi browser extension. Receives element
+captures from the extension and appends agent-ready edit prompts to
 `.vibe-edits/queue.md` in your project.
 
 ## Usage
 
 From your project root (the directory you want `.vibe-edits/queue.md`
-created in):
+created in, and where source files live for auto-apply):
 
 ```
 npx visidi-bridge
@@ -16,14 +16,40 @@ npx visidi-bridge
 You should see:
 
 ```
-[vibe-edit-bridge] Running on ws://localhost:4017 — writing to .vibe-edits/queue.md in /path/to/project
+[visidi-bridge] Running on ws://localhost:4017
+[visidi-bridge] Queue file: /path/to/project/.vibe-edits/queue.md
 ```
 
-Leave it running while you use the Visidi extension. Stop it any
-time with `Ctrl+C`.
+Leave it running while you use the Visidi extension. Stop it any time with
+`Ctrl+C`.
 
-Then, in Claude Code or Codex, ask it to check `.vibe-edits/queue.md` for
-pending edits.
+## Queue-only (default)
+
+Capture an element in the extension and send **without** checking
+**Apply automatically**. The bridge appends a formatted prompt to
+`.vibe-edits/queue.md`. Then ask your coding agent:
+
+> Check `.vibe-edits/queue.md` and apply the pending edit.
+
+The live page does not change until you edit source files and refresh.
+
+## Auto-apply (opt-in)
+
+Check **Apply automatically** in the extension before sending. The bridge
+still writes `queue.md` (audit trail), then spawns the local `claude` CLI:
+
+```
+claude -p "<prompt>" --permission-mode acceptEdits
+```
+
+Requirements:
+
+- `claude` must be on your `PATH` (Claude Code CLI installed and authenticated)
+- Run the bridge from the **project root** you want edited (same `cwd` as queue file)
+- Only one auto-apply runs at a time; a second request while busy is rejected
+
+Watch the bridge terminal for `[claude]` output and a `git diff --stat`
+summary after each run. Refresh your browser to see changes.
 
 ## Troubleshooting
 
@@ -37,6 +63,10 @@ in this version, so it won't find it on a fallback port even if one binds.
 the bridge is running**
 Confirm the terminal output says it bound to port `4017` specifically (see
 above) — if it fell back to 4018+, the extension won't see it.
+
+**Auto-apply fails immediately (`spawn claude ENOENT`)**
+Install Claude Code CLI and ensure `claude` is available in the same shell
+environment where you run `npx visidi-bridge`.
 
 **Permission errors creating `.vibe-edits/`**
 Make sure you're running the bridge from a directory you have write access

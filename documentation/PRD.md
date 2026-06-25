@@ -229,7 +229,7 @@ vibe-edit-bridge/
 
 - Screenshot capture per element (needs `activeTab` + background-script coordination, cut in §6.4).
 - Dynamic port negotiation so the extension doesn't hardcode `4017` (e.g. bridge writes its actual port to a well-known local file or the extension tries a small port range too).
-- Direct CLI invocation of `claude`/`codex` from the bridge instead of a queue file the user manually points the agent at.
+- Direct CLI invocation of `claude`/`codex` from the bridge instead of a queue file the user manually points the agent at. *(Partially delivered in v2: opt-in `claude` auto-apply via `documentation/auto-apply-plan.md`; Codex/multi-agent still out of scope.)*
 - Source-map-based file:line resolution for React/Next.js (would require a Babel/SWC plugin injecting `data-source` attributes — a materially larger project, deliberately deferred).
 - Drag-based resize/reposition with CSS/Tailwind class inference.
 - Packaging the extension for the Chrome Web Store (v1 is unpacked/workshop-distributed only).
