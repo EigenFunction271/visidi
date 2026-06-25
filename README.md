@@ -4,51 +4,37 @@
 what you want changed, and get a structured edit prompt for AI coding agents
 (Claude Code, Codex, Cursor, etc.).
 
-Visidi has two parts:
+Visidi has two parts that run **entirely on your machine**:
 
-| Part | What it does |
-|------|----------------|
-| **Chrome extension** (`vibe-edit-extension/`) | Pick elements on `localhost` pages and capture edit instructions |
-| **Bridge CLI** ([`visidi-bridge`](https://www.npmjs.com/package/visidi-bridge)) | Receives captures over WebSocket and writes `.vibe-edits/queue.md` (optionally runs `claude` to auto-apply) |
+| Part | Install | What it does |
+|------|---------|----------------|
+| **Chrome extension** | [Chrome Web Store](https://chromewebstore.google.com/) (search **Visidi**) | Pick elements on `localhost` pages and capture edit instructions |
+| **Bridge CLI** | `npx visidi-bridge` — [npm](https://www.npmjs.com/package/visidi-bridge) | Receives captures and writes `.vibe-edits/queue.md` (optional auto-apply via `claude`) |
 
-The extension does **not** work on production URLs — only `localhost`,
-`127.0.0.1`, and local `file://` HTML files.
+The extension only works on **local dev sites** — `localhost`, `127.0.0.1`,
+and `file://` HTML files. It does not run on deployed production URLs.
 
----
-
-## Prerequisites
-
-- **Google Chrome** (Manifest V3 extension)
-- **Node.js 18+** (for the bridge)
-- A local dev site (or the included mock landing page)
-- *(Optional, for auto-apply)* [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed and on your `PATH` (`claude --version`)
+**Current release:** extension `0.2.0` · bridge [`visidi-bridge@0.2.0`](https://www.npmjs.com/package/visidi-bridge)
 
 ---
 
-## Quick start (fresh install)
+## Quick start (production users)
 
-### 1. Clone the repo
+You do **not** need to clone this repo.
 
-```bash
-git clone https://github.com/EigenFunction271/visidi.git
-cd visidi
-```
+### 1. Install the Chrome extension
 
-### 2. Install the Chrome extension
+Install **Visidi** from the [Chrome Web Store](https://chromewebstore.google.com/)
+(search for “Visidi” by Brendan Beh / EigenFunction271).
 
-1. Open **`chrome://extensions`**
-2. Enable **Developer mode** (top right)
-3. Click **Load unpacked**
-4. Select the **`vibe-edit-extension/`** folder from this repo
-5. Pin **Visidi** to your toolbar (puzzle icon → pin)
+Then pin it to your toolbar (puzzle icon → pin).
 
-If you will test against local HTML files (`file://`), also enable **Allow
-access to file URLs** on the extension card.
+If you use local HTML files (`file://`), open `chrome://extensions`, find
+Visidi, and enable **Allow access to file URLs**.
 
-### 3. Start the bridge
+### 2. Start the bridge
 
-Open a terminal in the **project you want to edit** (for the mock landing,
-use the repo root):
+In a terminal, `cd` to the **project you want to edit** (your app’s repo root):
 
 ```bash
 cd /path/to/your/project
@@ -62,68 +48,45 @@ Leave this running. You should see:
 [visidi-bridge] Queue file: /path/to/your/project/.vibe-edits/queue.md
 ```
 
-> **Important:** `queue.md` and auto-apply both use the directory where you
-> run `npx visidi-bridge`. Start it from your app’s project root, not from
-> inside `vibe-edit-bridge/`.
+> Run the bridge from your **app’s project root** — that’s where `queue.md`
+> is created and where auto-apply edits source files.
 
-### 4. Open a local page
-
-**Option A — mock landing (included in this repo)**
+Optional: pin the bridge version in a project:
 
 ```bash
-# Terminal 2
-cd examples/mock-landing
-npx --yes serve --listen 3000 .
+npm install --save-dev visidi-bridge
+# package.json → "scripts": { "visidi": "visidi-bridge" }
 ```
 
-Open **http://localhost:3000** in Chrome.
-
-**Option B — your own app**
+### 3. Open your local dev site
 
 ```bash
-npm run dev   # or however you start your local server
+npm run dev   # Next.js, Vite, etc.
 ```
 
-Open the `localhost` URL your dev server prints.
+Open the `localhost` URL your dev server prints in Chrome.
 
-### 5. Capture an edit
+### 4. Capture an edit
 
-1. Click the **Visidi** toolbar icon → **Pick an element**
-2. Click any element on the page (hover shows a blue outline)
-3. Type what you want changed in the composer at the bottom
-4. Click **Send**
+1. Click **Visidi** in the toolbar → **Pick an element**
+2. Click any element (blue hover outline)
+3. Describe the change in the composer → **Send**
 
-**Queue-only (default):** the bridge appends to `.vibe-edits/queue.md`.
-Tell your agent:
+| Mode | What happens |
+|------|----------------|
+| **Queue-only** (default) | Prompt appended to `.vibe-edits/queue.md` — tell your agent to read and apply it |
+| **Apply automatically** (checkbox) | Bridge queues the edit **and** runs `claude` locally — refresh the page to see changes |
 
-> Check `.vibe-edits/queue.md` and apply the pending edit.
-
-**Auto-apply (opt-in):** check **Apply automatically** before Send. The
-bridge queues the edit and runs `claude` locally. Watch the bridge terminal,
-then **refresh the page** to see changes.
-
-### 6. Verify setup (optional)
-
-From the repo root, with the mock site and bridge running:
-
-```bash
-node scripts/check-setup.js http://localhost:3000
-```
-
-Both lines should show ✓.
+Auto-apply requires [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) on your `PATH`.
 
 ---
 
-## Project layout
+## Prerequisites
 
-```
-visidi/
-├── vibe-edit-extension/   Chrome extension (load unpacked)
-├── vibe-edit-bridge/      npm package — npx visidi-bridge
-├── examples/mock-landing/ Test page for local QA
-├── documentation/         PRD and design docs
-└── scripts/               check-setup.js, bridge smoke tests
-```
+- Google Chrome
+- Node.js 18+
+- A site served on `localhost` / `127.0.0.1` (or local `file://` HTML)
+- *(Auto-apply only)* `claude` CLI installed and authenticated
 
 ---
 
@@ -131,22 +94,58 @@ visidi/
 
 | Problem | Fix |
 |---------|-----|
-| “Copied to clipboard (bridge not running)” | Start `npx visidi-bridge` in a terminal; confirm port **4017** (`lsof -i :4017`) |
-| Pick does nothing | Tab must be `localhost` / `127.0.0.1` / `file://` — reload extension after code changes |
-| `queue.md` in wrong folder | Run the bridge from your **project root**, not `vibe-edit-bridge/` |
-| Auto-apply fails (`spawn claude ENOENT`) | Install Claude Code CLI; verify `claude` works in the same terminal |
-| Page doesn’t update after “Applied ✓” | Expected — auto-apply edits **source files**. Refresh the browser |
-| Port 3000 busy | `serve` will pick another port; use that URL in `check-setup.js` |
+| “Copied to clipboard (bridge not running)” | Run `npx visidi-bridge` from your project root; confirm port **4017** is free (`lsof -i :4017`) |
+| Pick does nothing | Tab must be `localhost` / `127.0.0.1` / `file://` |
+| `queue.md` in wrong folder | Start the bridge from your **project root**, not a subdirectory |
+| Auto-apply fails (`spawn claude ENOENT`) | Install Claude Code CLI; run `claude --version` in the same terminal |
+| “Applied ✓” but page unchanged | Expected — edits land in **source files**. Refresh the browser |
+| Extension + bridge version mismatch | Use bridge `npx visidi-bridge@latest` (0.2.0+) for auto-apply |
 
-More detail: [`vibe-edit-bridge/README.md`](vibe-edit-bridge/README.md),
-[`examples/mock-landing/README.md`](examples/mock-landing/README.md).
+Add `.vibe-edits/` to your app’s `.gitignore` — it’s local scratch, not source.
+
+More detail: [`vibe-edit-bridge/README.md`](vibe-edit-bridge/README.md)
+
+---
+
+## Developers & contributors
+
+Clone the repo to work on the extension, run tests, or load an unpacked build:
+
+```bash
+git clone https://github.com/EigenFunction271/visidi.git
+cd visidi
+```
+
+**Load unpacked extension** (instead of the Store build):
+
+1. `chrome://extensions` → Developer mode → **Load unpacked**
+2. Select `vibe-edit-extension/`
+
+**Mock landing page** for local QA:
+
+```bash
+cd examples/mock-landing && npx --yes serve --listen 3000 .
+node scripts/check-setup.js http://localhost:3000   # from repo root
+```
+
+### Project layout
+
+```
+visidi/
+├── vibe-edit-extension/   Chrome extension source
+├── vibe-edit-bridge/      npm package (visidi-bridge)
+├── examples/mock-landing/ Test page
+├── documentation/         PRD and design docs
+└── scripts/               check-setup.js, bridge smoke tests
+```
 
 ---
 
 ## Privacy
 
-See [PRIVACY.md](PRIVACY.md). All capture data stays on your machine unless
-you opt in to auto-apply, which invokes the local `claude` CLI.
+See [PRIVACY.md](PRIVACY.md). Capture data stays on your machine unless you
+opt in to auto-apply, which invokes the local `claude` CLI (and Anthropic’s
+API per your Claude Code setup).
 
 ---
 

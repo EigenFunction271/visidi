@@ -51,6 +51,24 @@ Requirements:
 Watch the bridge terminal for `[claude]` output and a `git diff --stat`
 summary after each run. Refresh your browser to see changes.
 
+## Publishing (maintainers)
+
+From the **repo root**, not `examples/mock-landing/`:
+
+```bash
+cd vibe-edit-bridge
+npm pack --dry-run    # confirm applyEdit.js is in the tarball
+npm publish           # requires npm login; ships version from package.json
+```
+
+Then verify:
+
+```bash
+npx visidi-bridge@latest
+```
+
+Current published version: **0.2.0** (includes auto-apply).
+
 ## Troubleshooting
 
 **"Could not bind any port in range 4017-4020"**

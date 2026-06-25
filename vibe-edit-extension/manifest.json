@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Visidi",
-  "version": "0.1.0",
-  "description": "Click an element on your local site to capture a structured edit prompt for Claude Code, Codex, or other AI coding agents.",
+  "version": "0.2.0",
+  "description": "Click elements on your local dev site to capture edit prompts for AI coding agents. Optional auto-apply via Claude Code.",
   "permissions": ["activeTab", "scripting", "clipboardWrite"],
   "host_permissions": [
     "http://localhost/*",
