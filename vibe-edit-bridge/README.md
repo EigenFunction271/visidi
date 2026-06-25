@@ -1,6 +1,6 @@
-# visidi
+# VIbey SIte DIrector
 
-Local WebSocket bridge for the Vibe Edit Picker browser extension. Receives
+Local WebSocket bridge for the VIbey SIte DIrector browser extension. Receives
 element captures from the extension and appends agent-ready edit prompts to
 `.vibe-edits/queue.md` in your project.
 
@@ -10,7 +10,7 @@ From your project root (the directory you want `.vibe-edits/queue.md`
 created in):
 
 ```
-npx visidi
+npx visidi-bridge
 ```
 
 You should see:
@@ -19,7 +19,7 @@ You should see:
 [vibe-edit-bridge] Running on ws://localhost:4017 — writing to .vibe-edits/queue.md in /path/to/project
 ```
 
-Leave it running while you use the Vibe Edit Picker extension. Stop it any
+Leave it running while you use the Visidi extension. Stop it any
 time with `Ctrl+C`.
 
 Then, in Claude Code or Codex, ask it to check `.vibe-edits/queue.md` for

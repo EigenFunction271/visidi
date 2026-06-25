@@ -1,7 +1,7 @@
 {
-  "name": "visidi",
+  "name": "visidi-bridge",
   "version": "0.1.0",
-  "description": "Local WebSocket bridge that receives element captures from the Vibe Edit Picker browser extension and writes agent-ready prompts to a queue file.",
+  "description": "Local WebSocket bridge that receives element captures from the Visidi browser extension and writes agent-ready prompts to a queue file.",
   "author": "Brendan Beh",
   "repository": {
     "type": "git",
@@ -9,7 +9,7 @@
   },
   "main": "cli.js",
   "bin": {
-    "visidi": "./cli.js"
+    "visidi-bridge": "cli.js"
   },
   "scripts": {
     "start": "node cli.js"

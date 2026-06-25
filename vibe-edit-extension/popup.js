@@ -1,5 +1,5 @@
 /**
- * Popup script for Vibe Edit Picker.
+ * Popup script for Visidi.
  *
  * Responsibilities (PRD §6.5):
  *  - Send TOGGLE_PICK_MODE to the active tab's content script.
