@@ -23,15 +23,43 @@ You should see:
 Leave it running while you use the Visidi extension. Stop it any time with
 `Ctrl+C`.
 
-## Queue-only (default)
+## Run bridge + dev server together (`--dev`)
+
+Instead of two terminals, start your dev server alongside the bridge:
+
+```
+npx visidi-bridge --dev -- npm run dev
+```
+
+Everything after `--` is run as your dev command (output prefixed `[dev]`).
+`Ctrl+C` stops both. If your dev server crashes unexpectedly, the bridge
+shuts down too — restart `npx visidi-bridge --dev -- ...` to bring both back.
+
+Drop the `-- <command>` part to auto-detect from `package.json`'s `"dev"`
+script (falling back to `"start"`):
+
+```
+npx visidi-bridge --dev
+```
+
+If neither script exists, the bridge exits with an error listing the
+scripts it found — pass an explicit `-- <command>` in that case.
+
+## Queue-only (default) — use with Claude Code
 
 Capture an element in the extension and send **without** checking
 **Apply automatically**. The bridge appends a formatted prompt to
-`.vibe-edits/queue.md`. Then ask your coding agent:
+`.vibe-edits/queue.md`.
 
-> Check `.vibe-edits/queue.md` and apply the pending edit.
+In a Claude Code session started from the same project root:
 
-The live page does not change until you edit source files and refresh.
+```
+Read .vibe-edits/queue.md and apply the most recent edit request.
+```
+
+The live page does not change until Claude edits source files and you refresh.
+
+See the root [README](../README.md#using-visidi-with-claude-code) for a full walkthrough.
 
 ## Auto-apply (opt-in)
 
@@ -50,6 +78,20 @@ Requirements:
 
 Watch the bridge terminal for `[claude]` output and a `git diff --stat`
 summary after each run. Refresh your browser to see changes.
+
+### Source-location hints (component frameworks)
+
+On React pages, the extension makes a best-effort attempt to read dev-mode
+source metadata directly off the clicked element (React's fiber debug
+source, component name, or attributes from inspector plugins like
+`vite-plugin-vue-inspector`/`react-dev-inspector` if installed) — see
+`documentation/source-mapping-plan.md`. When found, the prompt includes a
+`**Likely source location:**` or `**Likely component:**` line. When
+nothing is found (`sourceConfidence: "none"`), **auto-apply is skipped
+automatically** — the edit is still queued to `queue.md`, but the bridge
+won't blind-edit an unfamiliar codebase on a pure text-grep guess. The
+extension toast will say "Auto-apply skipped" rather than "Failed" in
+that case.
 
 ## Publishing (maintainers)
 
@@ -90,3 +132,12 @@ environment where you run `npx visidi-bridge`.
 Make sure you're running the bridge from a directory you have write access
 to, and that there isn't a file (not a directory) already named
 `.vibe-edits` in that folder.
+
+**Bridge exits right after starting with `--dev`**
+The dev process crashed (or failed to start, e.g. command not found) and
+the bridge shut itself down with it — check the `[dev]`-prefixed output
+just above the shutdown message for the actual error.
+
+**`--dev` says "No dev or start script in package.json"**
+Auto-detect only looks for `scripts.dev` / `scripts.start`. Use an
+explicit command instead: `npx visidi-bridge --dev -- <your command>`.

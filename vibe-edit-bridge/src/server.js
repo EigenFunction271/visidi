@@ -31,12 +31,25 @@ function isValidPayload(payload) {
   ) {
     return false;
   }
+  if (
+    payload.sourceConfidence !== undefined &&
+    typeof payload.sourceConfidence !== "string"
+  ) {
+    return false;
+  }
+  if (
+    payload.sourceHints !== undefined &&
+    payload.sourceHints !== null &&
+    typeof payload.sourceHints !== "object"
+  ) {
+    return false;
+  }
   return true;
 }
 
-function sendApplyResult(ws, ok, message) {
+function sendApplyResult(ws, ok, message, extra = {}) {
   if (ws.readyState === ws.OPEN) {
-    ws.send(JSON.stringify({ type: "apply_result", ok, message }));
+    ws.send(JSON.stringify({ type: "apply_result", ok, message, ...extra }));
   }
 }
 
@@ -146,6 +159,20 @@ async function startServer({ portRangeStart, portRangeEnd, cwd }) {
           if (!autoApply) {
             console.log(
               "[visidi-bridge]   next step: tell your coding agent to read this file and apply the edit in source code"
+            );
+            return;
+          }
+
+          const confidence = payload.sourceConfidence || "none";
+          if (confidence === "none") {
+            console.warn(
+              "[visidi-bridge]   auto-apply skipped — no reliable source location found (confidence: none); edit queued for manual review"
+            );
+            sendApplyResult(
+              ws,
+              false,
+              "Auto-apply skipped — no reliable source location found for this element; edit queued in .vibe-edits/queue.md for manual review.",
+              { skipped: true }
             );
             return;
           }

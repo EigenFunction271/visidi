@@ -10,19 +10,28 @@ without a real app.
 3. **Load unpacked** → select `vibe-edit-extension/` from this repo
 4. Pin **Visidi** to the toolbar
 
-## 2. Start the bridge (optional but recommended)
+## 2. Start the bridge + this page together (optional but recommended)
 
-From the **repo root** (or any project where you want `.vibe-edits/queue.md`):
+From the **repo root**:
+
+```bash
+npx visidi-bridge --dev -- npx --yes serve -p 3000 examples/mock-landing
+```
+
+Leave this terminal open, then open **http://localhost:3000** in Chrome.
+`Ctrl+C` stops both the bridge and the mock server.
+
+Prefer two separate terminals? Run them individually instead:
+
+## 3. Serve this page (separate-terminal alternative)
+
+From the repo root:
 
 ```bash
 npx visidi-bridge
 ```
 
-Leave this terminal open.
-
-## 3. Serve this page
-
-From this directory:
+From this directory, in a second terminal:
 
 ```bash
 npx --yes serve -p 3000 .

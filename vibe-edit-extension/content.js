@@ -146,6 +146,7 @@
 
   function captureElement(el) {
     const rect = el.getBoundingClientRect();
+    const sourceHints = getSourceHints(el);
     return {
       type: "element_selected",
       selector: buildSelector(el),
@@ -167,7 +168,202 @@
       pageUrl: window.location.href,
       timestamp: Date.now(),
       instruction: "", // filled in by promptForInstructionThenSend, see §6.6 revision
+      sourceHints: sourceHints || null,
+      sourceConfidence: sourceHints ? sourceHints.confidence : "none",
     };
+  }
+
+  // ---------------------------------------------------------------------
+  // Source-location probes — documentation/source-mapping-plan.md (Tier 1)
+  //
+  // Zero-config, best-effort detection of dev-mode source metadata that
+  // frameworks already expose for their own DevTools/inspector tooling.
+  // Each probe only reads DOM nodes/attributes/expando properties — never
+  // `window.*` globals — because content scripts run in an isolated JS
+  // world and do not share the page's `window` object, only the DOM. DOM
+  // elements (and expando properties framework runtimes attach to them,
+  // e.g. React's `__reactFiber$...`) ARE shared, so reading those is safe;
+  // reading `window.__REACT_DEVTOOLS_GLOBAL_HOOK__` would silently return
+  // undefined even when the page itself has it set.
+  //
+  // Every probe must be wrapped in try/catch and never throw — we're
+  // reaching into framework internals that can change shape between
+  // versions, and a probe failure must never break element picking.
+  // ---------------------------------------------------------------------
+
+  function findReactFiber(el) {
+    const key = Object.keys(el).find(
+      (k) => k.startsWith("__reactFiber$") || k.startsWith("__reactInternalInstance$")
+    );
+    return key ? el[key] : null;
+  }
+
+  function probeReactFiberDebugSource(el) {
+    try {
+      let fiber = findReactFiber(el);
+      let depth = 0;
+      while (fiber && depth < 30) {
+        const src = fiber._debugSource;
+        if (src && src.fileName) {
+          return {
+            fileName: src.fileName,
+            lineNumber: src.lineNumber,
+            columnNumber: src.columnNumber,
+            matchedVia: "react-fiber-debug-source",
+            confidence: "high",
+          };
+        }
+        fiber = fiber.return;
+        depth += 1;
+      }
+    } catch (_) {
+      /* noop — never let a probe break picking */
+    }
+    return null;
+  }
+
+  function probeReactFiberComponentName(el) {
+    try {
+      let fiber = findReactFiber(el);
+      let depth = 0;
+      while (fiber && depth < 30) {
+        const name =
+          typeof fiber.type === "function"
+            ? fiber.type.displayName || fiber.type.name
+            : null;
+        if (name) {
+          return {
+            componentName: name,
+            matchedVia: "react-fiber-component-name",
+            confidence: "medium",
+          };
+        }
+        fiber = fiber.return;
+        depth += 1;
+      }
+    } catch (_) {
+      /* noop */
+    }
+    return null;
+  }
+
+  function probeInspectorPluginAttributes(el) {
+    // Attribute names below are best-effort, based on common conventions
+    // used by existing click-to-source dev plugins (react-dev-inspector
+    // style `data-inspector-*`, vite-plugin-vue-inspector style
+    // `data-v-inspector="file:line:col"`). Not verified against every
+    // plugin version — if these don't match, the probe just finds
+    // nothing and returns null.
+    try {
+      let node = el;
+      let depth = 0;
+      while (node && node.nodeType === 1 && depth < 10) {
+        const relPath =
+          node.getAttribute && node.getAttribute("data-inspector-relative-path");
+        if (relPath) {
+          const line = node.getAttribute("data-inspector-line");
+          const column = node.getAttribute("data-inspector-column");
+          return {
+            fileName: relPath,
+            lineNumber: line ? Number(line) : undefined,
+            columnNumber: column ? Number(column) : undefined,
+            matchedVia: "inspector-attribute(data-inspector-*)",
+            confidence: "high",
+          };
+        }
+
+        const vInspector = node.getAttribute && node.getAttribute("data-v-inspector");
+        if (vInspector) {
+          const parts = vInspector.split(":");
+          const fileName = parts.length > 2 ? parts.slice(0, -2).join(":") : parts[0];
+          const lineNumber = parts.length >= 2 ? Number(parts[parts.length - 2]) : undefined;
+          const columnNumber = parts.length >= 1 ? Number(parts[parts.length - 1]) : undefined;
+          return {
+            fileName,
+            lineNumber,
+            columnNumber,
+            matchedVia: "inspector-attribute(data-v-inspector)",
+            confidence: "high",
+          };
+        }
+
+        node = node.parentElement;
+        depth += 1;
+      }
+    } catch (_) {
+      /* noop */
+    }
+    return null;
+  }
+
+  function probeNextJsDevOverlayMarkers(el) {
+    // Best-effort/stretch — Next.js doesn't have a documented stable
+    // per-element source attribute, so this is a generic scan for any
+    // `data-nextjs*` attribute that looks path-like. Low expected yield.
+    try {
+      let node = el;
+      let depth = 0;
+      while (node && node.nodeType === 1 && depth < 10) {
+        if (node.attributes) {
+          for (const attr of Array.from(node.attributes)) {
+            if (attr.name.startsWith("data-nextjs") && attr.value) {
+              return {
+                fileName: attr.value,
+                matchedVia: `inspector-attribute(${attr.name})`,
+                confidence: "medium",
+              };
+            }
+          }
+        }
+        node = node.parentElement;
+        depth += 1;
+      }
+    } catch (_) {
+      /* noop */
+    }
+    return null;
+  }
+
+  function probeStructuralFallback(el) {
+    // None of the framework-specific probes found anything. If we also
+    // can't find any sign that a JS framework is rendering this page at
+    // all (no React fiber anywhere, no known SPA root marker), the page
+    // is most likely plain static HTML — in which case the structural
+    // nth-child selector IS the source (the DOM and the markup are the
+    // same file), so it's reasonable to treat that as medium confidence
+    // rather than "none". Genuinely unknown frameworks with no detectable
+    // marker still fall through to "none" here — that's the safe
+    // direction to be wrong in (more conservative, not less).
+    try {
+      const hasReactFiber = !!findReactFiber(el) || !!findReactFiber(document.body);
+      const hasKnownFrameworkRoot = !!document.querySelector(
+        "[data-reactroot], #__next, [data-v-app], [data-server-rendered], [ng-version]"
+      );
+      if (!hasReactFiber && !hasKnownFrameworkRoot) {
+        return {
+          matchedVia: "no-framework-detected (structural selector likely reliable on plain HTML)",
+          confidence: "medium",
+        };
+      }
+    } catch (_) {
+      /* noop */
+    }
+    return null;
+  }
+
+  function getSourceHints(el) {
+    const probes = [
+      probeReactFiberDebugSource,
+      probeInspectorPluginAttributes,
+      probeReactFiberComponentName,
+      probeNextJsDevOverlayMarkers,
+      probeStructuralFallback,
+    ];
+    for (const probe of probes) {
+      const result = probe(el);
+      if (result) return result;
+    }
+    return null;
   }
 
   // ---------------------------------------------------------------------
@@ -360,6 +556,10 @@
 
         if (msg.ok) {
           showToast("Applied ✓");
+        } else if (msg.skipped) {
+          showToast(
+            msg.message || "Auto-apply skipped — edit queued for manual review"
+          );
         } else {
           const detail = msg.message ? `: ${msg.message}` : "";
           showToast(`Failed — see bridge terminal${detail}`);
@@ -408,17 +608,57 @@
         ? payload.instruction
         : "[Edit this line with what you want changed — e.g. \"Make the background green and increase the padding.\"]";
 
-    return [
+    const lines = [
       `## Edit request — ${payload.tag} element`,
       "",
       `**What it is:** ${payload.tag} element with text "${textPreview}"`,
       `**Location on page:** ${payload.selector}`,
       `**Classes:** ${classesStr}`,
-      `**Current style:** color ${payload.computedStyle.color}, background ${payload.computedStyle.backgroundColor}, font-size ${payload.computedStyle.fontSize}, padding ${payload.computedStyle.padding}`,
-      `**Page:** ${payload.pageUrl}`,
-      "",
-      `**Instruction:** ${instruction}`,
-    ].join("\n");
+    ];
+
+    if (payload.id) {
+      lines.push(`**ID:** ${payload.id}`);
+    }
+
+    if (payload.attributes && (payload.attributes.href || payload.attributes.src)) {
+      const attrBits = [];
+      if (payload.attributes.href) attrBits.push(`href="${payload.attributes.href}"`);
+      if (payload.attributes.src) attrBits.push(`src="${payload.attributes.src}"`);
+      lines.push(`**Attributes:** ${attrBits.join(", ")}`);
+    }
+
+    lines.push(
+      `**Current style:** color ${payload.computedStyle.color}, background ${payload.computedStyle.backgroundColor}, font-size ${payload.computedStyle.fontSize}, padding ${payload.computedStyle.padding}`
+    );
+
+    if (payload.boundingRect) {
+      const r = payload.boundingRect;
+      lines.push(
+        `**Bounding box:** x=${r.x}, y=${r.y}, width=${r.width}, height=${r.height}`
+      );
+    }
+
+    if (payload.sourceHints && payload.sourceHints.fileName) {
+      const { fileName, lineNumber, columnNumber, matchedVia } = payload.sourceHints;
+      const loc = lineNumber
+        ? `${fileName}:${lineNumber}${columnNumber ? `:${columnNumber}` : ""}`
+        : fileName;
+      lines.push(`**Likely source location:** ${loc} (via ${matchedVia})`);
+    } else if (payload.sourceHints && payload.sourceHints.componentName) {
+      lines.push(
+        `**Likely component:** <${payload.sourceHints.componentName} /> (via ${payload.sourceHints.matchedVia} — exact file/line not available; search for this component name)`
+      );
+    }
+
+    lines.push(`**Page:** ${payload.pageUrl}`);
+    lines.push("");
+    lines.push(
+      "Note: this element may be one of several rendered instances of a shared/looped component. If your search matches more than one location in source, use the bounding box, attributes, and surrounding text to pick the correct one — don't guess silently."
+    );
+    lines.push("");
+    lines.push(`**Instruction:** ${instruction}`);
+
+    return lines.join("\n");
   }
 
   // ---------------------------------------------------------------------
